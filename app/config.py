@@ -45,6 +45,10 @@ class Settings(BaseSettings):
     worker_job_timeout_seconds: int = Field(default=900, gt=0)
     worker_max_tries: int = Field(default=3, gt=0)
 
+    # --- Server-Sent Events ---
+    sse_poll_interval_seconds: float = Field(default=1.0, gt=0)
+    sse_heartbeat_seconds: float = Field(default=15.0, gt=0, description="Comment line to keep proxies from timing out")
+
     # --- Business policy ---
     # False: a batch with any failed row stays inactive (status=partial_failure).
     # True: activate whatever was created successfully.

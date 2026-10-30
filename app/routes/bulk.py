@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi.responses import StreamingResponse
 
 from app.config import Settings, get_settings
 from app.dependencies import get_bulk_service
@@ -81,4 +82,19 @@ async def retry_bulk(batch_id: str, service: BulkService = Depends(get_bulk_serv
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail=f"Batch {batch_id} not found")
     return BulkRetryResponse(
         batch_id=batch_id, status=JobStatus.QUEUED, retried_rows=retried, status_url=status_url(batch_id)
+    )
+
+
+@router.get(
+    "/{batch_id}/events",
+    response_class=StreamingResponse,
+    responses={200: {"content": {"text/event-stream": {}}}, 404: {"model": ErrorResponse}},
+)
+async def stream_bulk_events(batch_id: str, service: BulkService = Depends(get_bulk_service)) -> StreamingResponse:
+    if await service.get_status(batch_id) is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=f"Batch {batch_id} not found")
+    return StreamingResponse(
+        service.stream_status(batch_id),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

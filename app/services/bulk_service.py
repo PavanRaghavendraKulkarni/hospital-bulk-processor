@@ -2,7 +2,7 @@
 
 import hashlib
 import uuid
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from datetime import UTC, datetime
 
 from pydantic import BaseModel
@@ -125,6 +125,11 @@ class BulkService:
             percent_complete=percent,
             results=list(results.values()),
         )
+
+    async def stream_status(self, batch_id: str) -> AsyncIterator[str]:
+        """Yield Server-Sent Events: `progress` whenever the status changes, then one `complete` and stop."""
+        raise NotImplementedError
+        yield ""
 
     async def _find_reusable_job(self, file_hash: str, batch_id: str) -> JobMeta | None:
         """Return the job a duplicate upload should map to, or None if this upload should run as new."""
