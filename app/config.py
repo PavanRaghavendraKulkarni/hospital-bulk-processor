@@ -42,8 +42,13 @@ class Settings(BaseSettings):
 
     # --- Worker ---
     worker_max_jobs: int = Field(default=10, gt=0)
-    worker_job_timeout_seconds: int = Field(default=900, gt=0)
+    worker_job_timeout_seconds: int = Field(
+        default=1800, gt=0, description="Worst case: rows/concurrency * attempts * timeout"
+    )
     worker_max_tries: int = Field(default=3, gt=0)
+    worker_drain_seconds: float = Field(
+        default=75.0, gt=0, description="On shutdown, how long in-flight upstream requests may finish"
+    )
 
     # --- Server-Sent Events ---
     sse_poll_interval_seconds: float = Field(default=1.0, gt=0)

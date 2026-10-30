@@ -52,7 +52,17 @@ class BulkJobProcessor:
             logger.info("bulk_job_started", total_rows=len(rows), pending_rows=len(pending), resumed=bool(done))
 
             semaphore = asyncio.Semaphore(self._settings.per_job_concurrency)
-            await asyncio.gather(*(self._process_row(batch_id, row, semaphore) for row in pending))
+            stopping = asyncio.Event()
+            tasks = [asyncio.create_task(self._process_row(batch_id, row, semaphore, stopping)) for row in pending]
+            try:
+                # asyncio.wait (unlike gather) does not cancel the row tasks when this job is cancelled.
+                if tasks:
+                    await asyncio.wait(tasks)
+            except asyncio.CancelledError:
+                await self._drain(tasks, stopping)
+                raise
+            for task in tasks:
+                task.result()  # surface infrastructure errors (e.g. Redis down) so arq retries the job
 
             await self._finish(batch_id, started_at)
 
@@ -82,8 +92,26 @@ class BulkJobProcessor:
                 )
                 logger.info("row_reconciled", row=row.row_number, hospital_id=hospital.id)
 
-    async def _process_row(self, batch_id: str, row: HospitalRow, semaphore: asyncio.Semaphore) -> None:
+    async def _drain(self, tasks: list[asyncio.Task[None]], stopping: asyncio.Event) -> None:
+        """Job cancelled (worker shutting down): let rows already sent upstream finish and be recorded.
+
+        A cancelled request may still be committed upstream after we stop waiting, and the resumed job could
+        not see it yet when reconciling, so it would create the hospital again. Rows not yet started are skipped.
+        """
+        stopping.set()
+        in_flight = [t for t in tasks if not t.done()]
+        logger.warning("bulk_job_cancelled_draining", in_flight=len(in_flight))
+        if in_flight:
+            _, still_running = await asyncio.wait(in_flight, timeout=self._settings.worker_drain_seconds)
+            for task in still_running:
+                task.cancel()
+
+    async def _process_row(
+        self, batch_id: str, row: HospitalRow, semaphore: asyncio.Semaphore, stopping: asyncio.Event
+    ) -> None:
         async with semaphore:
+            if stopping.is_set():
+                return
             result = await self._create(batch_id, row)
         await self._store.record_result(batch_id, result)
         logger.info("row_processed", row=row.row_number, status=result.status, error=result.error)

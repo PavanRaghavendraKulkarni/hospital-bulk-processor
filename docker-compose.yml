@@ -31,6 +31,8 @@ services:
   worker:
     build: .
     command: ["arq", "app.worker.WorkerSettings"]
+    # Longer than WORKER_DRAIN_SECONDS so in-flight upstream calls can finish before SIGKILL.
+    stop_grace_period: 90s
     env_file:
       - path: .env
         required: false
