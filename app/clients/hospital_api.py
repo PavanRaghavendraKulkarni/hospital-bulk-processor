@@ -3,7 +3,8 @@
 import asyncio
 import random
 from collections.abc import Awaitable, Callable
-from typing import Any
+from contextlib import AbstractAsyncContextManager, nullcontext
+from typing import Any, Protocol
 
 import httpx
 from pydantic import BaseModel
@@ -39,6 +40,10 @@ class UpstreamUnavailableError(UpstreamError):
     """Retryable failure (network error, 429, 5xx) that persisted after all retries."""
 
 
+class UpstreamLimiter(Protocol):
+    def slot(self) -> AbstractAsyncContextManager[None]: ...
+
+
 class HospitalApiClient:
     def __init__(
         self,
@@ -48,12 +53,14 @@ class HospitalApiClient:
         backoff_base_seconds: float = 0.5,
         backoff_max_seconds: float = 8.0,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        limiter: UpstreamLimiter | None = None,
     ) -> None:
         self._http = http
         self._max_retries = max_retries
         self._backoff_base = backoff_base_seconds
         self._backoff_max = backoff_max_seconds
         self._sleep = sleep
+        self._limiter = limiter
 
     async def create_hospital(
         self, *, name: str, address: str, phone: str | None, batch_id: str
@@ -71,7 +78,9 @@ class HospitalApiClient:
         for attempt in range(attempts):
             retry_after: float | None = None
             try:
-                response = await self._http.request(method, path, json=json)
+                # Hold a global slot only for the HTTP call itself, never during backoff.
+                async with self._limiter.slot() if self._limiter else nullcontext():
+                    response = await self._http.request(method, path, json=json)
             except httpx.TransportError as exc:
                 failure = f"{type(exc).__name__}: {exc}"
             else:
