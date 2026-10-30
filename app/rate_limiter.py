@@ -32,13 +32,14 @@ class GlobalRateLimiter:
         self._poll = poll_interval_seconds
         self._clock = clock
         self._sleep = sleep
+        self._acquire_script = redis.register_script(_ACQUIRE_SCRIPT)
 
     async def try_acquire(self) -> str | None:
         """Take a slot if one is free. Returns a lease token, or None if the cap is reached."""
         token = uuid.uuid4().hex
         now = self._clock()
-        acquired = await self._redis.eval(
-            _ACQUIRE_SCRIPT, 1, self._key, now, now + self._lease, self._max, token, math.ceil(self._lease)
+        acquired = await self._acquire_script(
+            keys=[self._key], args=[now, now + self._lease, self._max, token, math.ceil(self._lease)]
         )
         return token if acquired else None
 
