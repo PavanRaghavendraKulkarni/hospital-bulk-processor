@@ -53,9 +53,7 @@ async def client(sleep: RecordingSleep) -> AsyncIterator[HospitalApiClient]:
 
 
 async def _create(client: HospitalApiClient):
-    return await client.create_hospital(
-        name="City Hospital", address="1 Main St", phone="555-0100", batch_id=BATCH_ID
-    )
+    return await client.create_hospital(name="City Hospital", address="1 Main St", phone="555-0100", batch_id=BATCH_ID)
 
 
 # --- create_hospital: happy path ---------------------------------------------
@@ -128,9 +126,7 @@ async def test_retries_429_and_honours_retry_after(client, sleep) -> None:
     [httpx.ConnectError("refused"), httpx.ReadTimeout("slow"), httpx.RemoteProtocolError("reset")],
 )
 async def test_retries_network_errors_then_succeeds(client, sleep, exc: Exception) -> None:
-    route = respx.post(f"{BASE_URL}/hospitals/").mock(
-        side_effect=[exc, httpx.Response(200, json=HOSPITAL_JSON)]
-    )
+    route = respx.post(f"{BASE_URL}/hospitals/").mock(side_effect=[exc, httpx.Response(200, json=HOSPITAL_JSON)])
 
     hospital = await _create(client)
 
@@ -154,9 +150,7 @@ async def test_gives_up_after_max_retries(client, sleep) -> None:
 async def test_backoff_is_exponential_with_jitter_and_capped(sleep) -> None:
     respx.post(f"{BASE_URL}/hospitals/").mock(return_value=httpx.Response(500))
     async with httpx.AsyncClient(base_url=BASE_URL) as http:
-        client = HospitalApiClient(
-            http, max_retries=6, backoff_base_seconds=1.0, backoff_max_seconds=8.0, sleep=sleep
-        )
+        client = HospitalApiClient(http, max_retries=6, backoff_base_seconds=1.0, backoff_max_seconds=8.0, sleep=sleep)
         with pytest.raises(UpstreamUnavailableError):
             await _create(client)
 
@@ -173,9 +167,7 @@ async def test_backoff_is_exponential_with_jitter_and_capped(sleep) -> None:
 @respx.mock
 @pytest.mark.parametrize("status", [400, 404, 409, 422])
 async def test_does_not_retry_4xx(client, sleep, status: int) -> None:
-    route = respx.post(f"{BASE_URL}/hospitals/").mock(
-        return_value=httpx.Response(status, json={"detail": "bad input"})
-    )
+    route = respx.post(f"{BASE_URL}/hospitals/").mock(return_value=httpx.Response(status, json={"detail": "bad input"}))
 
     with pytest.raises(UpstreamClientError) as exc_info:
         await _create(client)

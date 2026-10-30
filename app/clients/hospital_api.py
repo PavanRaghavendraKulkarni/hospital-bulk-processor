@@ -62,9 +62,7 @@ class HospitalApiClient:
         self._sleep = sleep
         self._limiter = limiter
 
-    async def create_hospital(
-        self, *, name: str, address: str, phone: str | None, batch_id: str
-    ) -> UpstreamHospital:
+    async def create_hospital(self, *, name: str, address: str, phone: str | None, batch_id: str) -> UpstreamHospital:
         payload = {"name": name, "address": address, "phone": phone, "creation_batch_id": batch_id}
         response = await self._request("POST", "/hospitals/", json=payload)
         return UpstreamHospital.model_validate(response.json())

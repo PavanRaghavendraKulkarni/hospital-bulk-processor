@@ -206,9 +206,7 @@ async def test_per_job_concurrency_is_bounded(store, http, upstream: FakeUpstrea
     assert len(upstream.created) == 12
 
 
-async def test_global_rate_limit_respected_across_concurrent_jobs(
-    fake_server, http, upstream: FakeUpstream
-) -> None:
+async def test_global_rate_limit_respected_across_concurrent_jobs(fake_server, http, upstream: FakeUpstream) -> None:
     """Two jobs on two 'workers' (separate Redis clients), each allowed 5 in parallel, share a global cap of 4."""
     settings = Settings(_env_file=None, per_job_concurrency=5)
     upstream.delay_seconds = 0.01

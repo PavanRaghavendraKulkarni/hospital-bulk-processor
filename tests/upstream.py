@@ -33,8 +33,14 @@ class FakeUpstream:
 
     def preexisting(self, batch_id: str, name: str, address: str) -> dict:
         """Simulate a hospital the upstream created before a worker crashed and lost the response."""
-        hospital = {"id": 900 + len(self.created), "name": name, "address": address, "phone": None,
-                    "creation_batch_id": batch_id, "active": False}
+        hospital = {
+            "id": 900 + len(self.created),
+            "name": name,
+            "address": address,
+            "phone": None,
+            "creation_batch_id": batch_id,
+            "active": False,
+        }
         self.created.append(hospital)
         self.batches.setdefault(batch_id, []).append(hospital)
         return hospital

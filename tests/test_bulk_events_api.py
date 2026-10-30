@@ -1,5 +1,6 @@
 import asyncio
 import json
+from itertools import pairwise
 
 from app.models import JobStatus, RowResult, RowStatus
 from app.progress_store import ProgressStore
@@ -47,7 +48,9 @@ async def test_streams_progress_until_complete(api, store: ProgressStore) -> Non
         await asyncio.sleep(0.05)
         await store.update_meta(batch_id, status=JobStatus.PROCESSING)
         await asyncio.sleep(0.05)
-        await store.record_result(batch_id, RowResult(row=1, name="City Hospital", status=RowStatus.CREATED, hospital_id=1))
+        await store.record_result(
+            batch_id, RowResult(row=1, name="City Hospital", status=RowStatus.CREATED, hospital_id=1)
+        )
         await asyncio.sleep(0.05)
         await store.record_result(batch_id, RowResult(row=2, name="General", status=RowStatus.CREATED, hospital_id=2))
         await store.update_meta(batch_id, status=JobStatus.COMPLETED, batch_activated=True)
@@ -66,4 +69,4 @@ async def test_streams_progress_until_complete(api, store: ProgressStore) -> Non
     assert events[-1][1]["percent_complete"] == 100.0
     # Only changes are emitted: no two consecutive identical payloads.
     payloads = [json.dumps(data, sort_keys=True) for _, data in events]
-    assert all(a != b for a, b in zip(payloads, payloads[1:]))
+    assert all(a != b for a, b in pairwise(payloads))

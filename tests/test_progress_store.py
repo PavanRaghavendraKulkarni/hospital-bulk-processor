@@ -10,9 +10,7 @@ CREATED_AT = datetime(2026, 10, 30, 12, 0, tzinfo=UTC)
 
 
 def _meta(total_rows: int = 3) -> JobMeta:
-    return JobMeta(
-        batch_id=BATCH_ID, filename="h.csv", file_hash="abc", total_rows=total_rows, created_at=CREATED_AT
-    )
+    return JobMeta(batch_id=BATCH_ID, filename="h.csv", file_hash="abc", total_rows=total_rows, created_at=CREATED_AT)
 
 
 def _rows(n: int = 3) -> list[HospitalRow]:
@@ -89,9 +87,7 @@ async def test_update_meta_sets_and_clears_fields(store: ProgressStore) -> None:
     await store.create_job(_meta(), _rows())
     started = datetime(2026, 10, 30, 12, 1, tzinfo=UTC)
 
-    await store.update_meta(
-        BATCH_ID, status=JobStatus.PROCESSING, started_at=started, batch_activated=True, error="x"
-    )
+    await store.update_meta(BATCH_ID, status=JobStatus.PROCESSING, started_at=started, batch_activated=True, error="x")
     meta = await store.get_meta(BATCH_ID)
     assert meta.status is JobStatus.PROCESSING
     assert meta.started_at == started

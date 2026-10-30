@@ -17,7 +17,11 @@ BATCH_ID = "3f2b8a1e-6c1d-4f7a-9b2e-0d5c8e7f1a23"
 async def _seed(store: ProgressStore, total: int = 4) -> None:
     rows = [HospitalRow(row_number=i, name=f"H{i}", address=f"{i} Main St") for i in range(1, total + 1)]
     meta = JobMeta(
-        batch_id=BATCH_ID, filename="h.csv", file_hash="x", total_rows=total, created_at=datetime(2026, 10, 30, tzinfo=UTC)
+        batch_id=BATCH_ID,
+        filename="h.csv",
+        file_hash="x",
+        total_rows=total,
+        created_at=datetime(2026, 10, 30, tzinfo=UTC),
     )
     await store.create_job(meta, rows)
 
