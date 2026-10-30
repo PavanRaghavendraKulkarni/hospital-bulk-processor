@@ -57,12 +57,7 @@ class BulkService:
 
     async def submit(self, content: bytes, filename: str | None) -> BulkSubmission:
         """Validate, persist and enqueue an upload. Raises CsvValidationError before touching Redis."""
-        rows = validate_csv(
-            content,
-            filename=filename,
-            max_rows=self._settings.max_csv_rows,
-            max_bytes=self._settings.max_upload_bytes,
-        )
+        rows = self.validate(content, filename)
         batch_id = str(uuid.uuid4())
         meta = JobMeta(
             batch_id=batch_id,

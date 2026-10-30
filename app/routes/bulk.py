@@ -1,3 +1,5 @@
+from dataclasses import dataclass
+
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 
 from app.config import Settings, get_settings
@@ -20,6 +22,20 @@ VALIDATION_RESPONSES = {
 }
 
 
+@dataclass(frozen=True)
+class Upload:
+    content: bytes
+    filename: str | None
+
+
+async def read_upload(
+    file: UploadFile = File(..., description="CSV with header name,address,phone"),
+    settings: Settings = Depends(get_settings),
+) -> Upload:
+    # Read at most one byte past the limit: enough to detect oversize without buffering it all.
+    return Upload(await file.read(settings.max_upload_bytes + 1), file.filename)
+
+
 def status_url(batch_id: str) -> str:
     return f"/hospitals/bulk/{batch_id}/status"
 
@@ -31,13 +47,9 @@ def status_url(batch_id: str) -> str:
     responses={**VALIDATION_RESPONSES, 503: {"model": ErrorResponse}},
 )
 async def upload_bulk(
-    file: UploadFile = File(..., description="CSV with header name,address,phone"),
-    service: BulkService = Depends(get_bulk_service),
-    settings: Settings = Depends(get_settings),
+    upload: Upload = Depends(read_upload), service: BulkService = Depends(get_bulk_service)
 ) -> BulkUploadResponse:
-    # Read at most one byte past the limit: enough to detect oversize without buffering it all.
-    content = await file.read(settings.max_upload_bytes + 1)
-    submission = await service.submit(content, file.filename)
+    submission = await service.submit(upload.content, upload.filename)
     return BulkUploadResponse(**submission.model_dump(), status_url=status_url(submission.batch_id))
 
 
@@ -51,12 +63,9 @@ async def get_bulk_status(batch_id: str, service: BulkService = Depends(get_bulk
 
 @router.post("/validate", response_model=CsvValidationResponse, responses=VALIDATION_RESPONSES)
 async def validate_bulk(
-    file: UploadFile = File(..., description="CSV with header name,address,phone"),
-    service: BulkService = Depends(get_bulk_service),
-    settings: Settings = Depends(get_settings),
+    upload: Upload = Depends(read_upload), service: BulkService = Depends(get_bulk_service)
 ) -> CsvValidationResponse:
-    content = await file.read(settings.max_upload_bytes + 1)
-    rows = service.validate(content, file.filename)
+    rows = service.validate(upload.content, upload.filename)
     return CsvValidationResponse(valid=True, total_rows=len(rows), rows=rows)
 
 
