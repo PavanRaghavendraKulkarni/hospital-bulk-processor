@@ -14,7 +14,7 @@ from app.logging_config import configure_logging, get_logger
 from app.progress_store import ProgressStore
 from app.routes import bulk, health
 from app.schemas import ErrorResponse
-from app.services.bulk_service import BulkService, QueueUnavailableError
+from app.services.bulk_service import BulkService, QueueUnavailableError, RetryNotAllowedError
 
 logger = get_logger(__name__)
 
@@ -49,10 +49,15 @@ async def _queue_unavailable_handler(request: Request, exc: QueueUnavailableErro
     return JSONResponse(status_code=503, content=body.model_dump())
 
 
+async def _retry_not_allowed_handler(request: Request, exc: RetryNotAllowedError) -> JSONResponse:
+    return JSONResponse(status_code=409, content=ErrorResponse(detail=str(exc)).model_dump())
+
+
 def create_app() -> FastAPI:
     app = FastAPI(title="Hospital Bulk Processor", version="0.1.0", lifespan=lifespan)
     app.add_exception_handler(CsvValidationError, _csv_validation_handler)
     app.add_exception_handler(QueueUnavailableError, _queue_unavailable_handler)
+    app.add_exception_handler(RetryNotAllowedError, _retry_not_allowed_handler)
     app.include_router(health.router)
     app.include_router(bulk.router)
     return app

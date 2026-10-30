@@ -6,7 +6,7 @@ from typing import Literal
 from pydantic import BaseModel
 
 from app.csv_validation import RowError
-from app.models import JobStatus, RowResult
+from app.models import HospitalRow, JobStatus, RowResult
 
 
 class HealthResponse(BaseModel):
@@ -25,6 +25,19 @@ class BulkUploadResponse(BaseModel):
     total_rows: int
     duplicate: bool = False
     status_url: str
+
+
+class BulkRetryResponse(BaseModel):
+    batch_id: str
+    status: JobStatus
+    retried_rows: list[int]
+    status_url: str
+
+
+class CsvValidationResponse(BaseModel):
+    valid: bool
+    total_rows: int
+    rows: list[HospitalRow]
 
 
 class BulkStatusResponse(BaseModel):

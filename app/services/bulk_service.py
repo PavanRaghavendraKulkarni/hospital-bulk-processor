@@ -11,7 +11,7 @@ from app.config import Settings
 from app.csv_validation import validate_csv
 from app.job_queue import JobQueue
 from app.logging_config import get_logger
-from app.models import JobMeta, JobStatus
+from app.models import HospitalRow, JobMeta, JobStatus
 from app.progress_store import ProgressStore
 from app.schemas import BulkStatusResponse
 
@@ -24,6 +24,10 @@ REUSABLE_STATUSES = frozenset({JobStatus.QUEUED, JobStatus.PROCESSING, JobStatus
 
 class QueueUnavailableError(Exception):
     """The job was validated and stored but could not be enqueued."""
+
+
+class RetryNotAllowedError(Exception):
+    """The job is in a state where a retry makes no sense (still running, or already fully succeeded)."""
 
 
 class BulkSubmission(BaseModel):
@@ -81,6 +85,13 @@ class BulkService:
         await self._enqueue(batch_id, job_id=batch_id)
         log.info("bulk_job_queued", filename=meta.filename, total_rows=meta.total_rows)
         return BulkSubmission(batch_id=batch_id, status=JobStatus.QUEUED, total_rows=meta.total_rows)
+
+    def validate(self, content: bytes, filename: str | None) -> list[HospitalRow]:
+        raise NotImplementedError
+
+    async def retry(self, batch_id: str) -> list[int] | None:
+        """Re-queue failed rows. Returns the row numbers reset, or None if the batch is unknown."""
+        raise NotImplementedError
 
     async def get_status(self, batch_id: str) -> BulkStatusResponse | None:
         meta = await self._store.get_meta(batch_id)

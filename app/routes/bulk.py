@@ -2,7 +2,14 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 
 from app.config import Settings, get_settings
 from app.dependencies import get_bulk_service
-from app.schemas import BulkStatusResponse, BulkUploadResponse, ErrorResponse
+from app.models import JobStatus
+from app.schemas import (
+    BulkRetryResponse,
+    BulkStatusResponse,
+    BulkUploadResponse,
+    CsvValidationResponse,
+    ErrorResponse,
+)
 from app.services.bulk_service import BulkService
 
 router = APIRouter(prefix="/hospitals/bulk", tags=["bulk"])
@@ -40,3 +47,29 @@ async def get_bulk_status(batch_id: str, service: BulkService = Depends(get_bulk
     if job_status is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail=f"Batch {batch_id} not found")
     return job_status
+
+
+@router.post("/validate", response_model=CsvValidationResponse, responses=VALIDATION_RESPONSES)
+async def validate_bulk(
+    file: UploadFile = File(..., description="CSV with header name,address,phone"),
+    service: BulkService = Depends(get_bulk_service),
+    settings: Settings = Depends(get_settings),
+) -> CsvValidationResponse:
+    content = await file.read(settings.max_upload_bytes + 1)
+    rows = service.validate(content, file.filename)
+    return CsvValidationResponse(valid=True, total_rows=len(rows), rows=rows)
+
+
+@router.post(
+    "/{batch_id}/retry",
+    status_code=status.HTTP_202_ACCEPTED,
+    response_model=BulkRetryResponse,
+    responses={404: {"model": ErrorResponse}, 409: {"model": ErrorResponse}, 503: {"model": ErrorResponse}},
+)
+async def retry_bulk(batch_id: str, service: BulkService = Depends(get_bulk_service)) -> BulkRetryResponse:
+    retried = await service.retry(batch_id)
+    if retried is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=f"Batch {batch_id} not found")
+    return BulkRetryResponse(
+        batch_id=batch_id, status=JobStatus.QUEUED, retried_rows=retried, status_url=status_url(batch_id)
+    )

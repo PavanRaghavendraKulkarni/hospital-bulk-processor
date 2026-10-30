@@ -12,7 +12,7 @@ from typing import Any
 
 from redis.asyncio import Redis
 
-from app.models import HospitalRow, JobMeta, RowResult, RowStatus
+from app.models import HospitalRow, JobMeta, JobStatus, RowResult, RowStatus
 
 
 def meta_key(batch_id: str) -> str:
@@ -98,6 +98,9 @@ class ProgressStore:
             for key in (meta_key(batch_id), rows_key(batch_id), results_key(batch_id)):
                 pipe.expire(key, self._ttl)
             await pipe.execute()
+
+    async def transition_status(self, batch_id: str, allowed_from: set[JobStatus], to: JobStatus) -> bool:
+        raise NotImplementedError
 
     async def delete_job(self, batch_id: str) -> None:
         await self._redis.delete(meta_key(batch_id), rows_key(batch_id), results_key(batch_id))
