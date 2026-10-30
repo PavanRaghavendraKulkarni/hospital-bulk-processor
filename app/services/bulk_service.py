@@ -13,6 +13,7 @@ from app.job_queue import JobQueue
 from app.logging_config import get_logger
 from app.models import JobMeta, JobStatus
 from app.progress_store import ProgressStore
+from app.schemas import BulkStatusResponse
 
 logger = get_logger(__name__)
 
@@ -67,6 +68,9 @@ class BulkService:
         await self._enqueue(batch_id, job_id=batch_id)
         log.info("bulk_job_queued", filename=meta.filename, total_rows=meta.total_rows)
         return BulkSubmission(batch_id=batch_id, status=JobStatus.QUEUED, total_rows=meta.total_rows)
+
+    async def get_status(self, batch_id: str) -> BulkStatusResponse | None:
+        raise NotImplementedError
 
     async def _enqueue(self, batch_id: str, job_id: str) -> None:
         try:
