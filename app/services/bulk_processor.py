@@ -44,15 +44,43 @@ class BulkJobProcessor:
                 batch_id, status=JobStatus.PROCESSING, started_at=started_at, finished_at=None, error=None
             )
             rows = await self._store.get_rows(batch_id)
-            logger.info("bulk_job_started", total_rows=len(rows))
+            # A previous start means a crash/redelivery or a retry: upstream may hold rows we never recorded.
+            if meta.started_at is not None:
+                await self._reconcile(batch_id, rows)
+            done = await self._store.get_results(batch_id)
+            pending = [row for row in rows if row.row_number not in done]
+            logger.info("bulk_job_started", total_rows=len(rows), pending_rows=len(pending), resumed=bool(done))
 
             semaphore = asyncio.Semaphore(self._settings.per_job_concurrency)
-            await asyncio.gather(*(self._process_row(batch_id, row, semaphore) for row in rows))
+            await asyncio.gather(*(self._process_row(batch_id, row, semaphore) for row in pending))
 
             await self._finish(batch_id, started_at)
 
     async def mark_failed(self, batch_id: str, error: str) -> None:
         await self._store.update_meta(batch_id, status=JobStatus.FAILED, error=error, finished_at=self._now())
+
+    async def _reconcile(self, batch_id: str, rows: list[HospitalRow]) -> None:
+        """Record rows that exist upstream but have no result in Redis, so they aren't created twice.
+
+        Matches on (name, address), which CSV validation guarantees is unique within a batch. If the upstream
+        batch can't be listed, the error propagates and the job is retried rather than risk duplicates.
+        """
+        results = await self._store.get_results(batch_id)
+        pending = [row for row in rows if row.row_number not in results]
+        if not pending:
+            return
+        claimed_ids = {r.hospital_id for r in results.values() if r.hospital_id is not None}
+        upstream = {
+            _row_key(h.name, h.address): h for h in await self._client.list_batch(batch_id) if h.id not in claimed_ids
+        }
+        for row in pending:
+            hospital = upstream.get(_row_key(row.name, row.address))
+            if hospital is not None:
+                await self._store.record_result(
+                    batch_id,
+                    RowResult(row=row.row_number, name=row.name, status=RowStatus.CREATED, hospital_id=hospital.id),
+                )
+                logger.info("row_reconciled", row=row.row_number, hospital_id=hospital.id)
 
     async def _process_row(self, batch_id: str, row: HospitalRow, semaphore: asyncio.Semaphore) -> None:
         async with semaphore:
@@ -113,6 +141,10 @@ class BulkJobProcessor:
             logger.error("batch_activation_failed", error=str(exc))
             return meta.batch_activated, f"Batch activation failed: {exc}"
         return True, None
+
+
+def _row_key(name: str, address: str) -> tuple[str, str]:
+    return name.strip().casefold(), address.strip().casefold()
 
 
 def _final_status(meta: JobMeta, activation_error: str | None) -> JobStatus:

@@ -73,7 +73,8 @@ class HospitalApiClient:
         await self._request("PATCH", f"/hospitals/batch/{batch_id}/activate")
 
     async def list_batch(self, batch_id: str) -> list[UpstreamHospital]:
-        raise NotImplementedError
+        response = await self._request("GET", f"/hospitals/batch/{batch_id}")
+        return [UpstreamHospital.model_validate(h) for h in response.json()]
 
     async def _request(self, method: str, path: str, json: Any = None) -> httpx.Response:
         """Send a request, retrying only on network errors, 429 and 5xx. 4xx raise immediately."""
