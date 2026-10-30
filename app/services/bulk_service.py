@@ -1,5 +1,6 @@
 """Use cases behind the /hospitals/bulk endpoints. Route handlers only translate HTTP <-> these calls."""
 
+import asyncio
 import hashlib
 import uuid
 from collections.abc import AsyncIterator, Callable
@@ -13,7 +14,7 @@ from app.job_queue import JobQueue
 from app.logging_config import get_logger
 from app.models import HospitalRow, JobMeta, JobStatus
 from app.progress_store import ProgressStore
-from app.schemas import BulkStatusResponse
+from app.schemas import BulkStatusResponse, ErrorResponse
 
 logger = get_logger(__name__)
 
@@ -128,8 +129,25 @@ class BulkService:
 
     async def stream_status(self, batch_id: str) -> AsyncIterator[str]:
         """Yield Server-Sent Events: `progress` whenever the status changes, then one `complete` and stop."""
-        raise NotImplementedError
-        yield ""
+        loop = asyncio.get_running_loop()
+        last_payload: str | None = None
+        last_sent = loop.time()
+        while True:
+            job_status = await self.get_status(batch_id)
+            if job_status is None:  # expired mid-stream
+                yield _sse("error", ErrorResponse(detail=f"Batch {batch_id} not found").model_dump_json())
+                return
+            payload = job_status.model_dump_json()
+            if job_status.status.is_final:
+                yield _sse("complete", payload)
+                return
+            if payload != last_payload:
+                yield _sse("progress", payload)
+                last_payload, last_sent = payload, loop.time()
+            elif loop.time() - last_sent >= self._settings.sse_heartbeat_seconds:
+                yield ": keep-alive\n\n"
+                last_sent = loop.time()
+            await asyncio.sleep(self._settings.sse_poll_interval_seconds)
 
     async def _find_reusable_job(self, file_hash: str, batch_id: str) -> JobMeta | None:
         """Return the job a duplicate upload should map to, or None if this upload should run as new."""
@@ -150,3 +168,7 @@ class BulkService:
             logger.exception("enqueue_failed", batch_id=batch_id)
             await self._store.update_meta(batch_id, status=JobStatus.FAILED, error=f"Could not enqueue job: {exc}")
             raise QueueUnavailableError(str(exc)) from exc
+
+
+def _sse(event: str, data: str) -> str:
+    return f"event: {event}\ndata: {data}\n\n"
