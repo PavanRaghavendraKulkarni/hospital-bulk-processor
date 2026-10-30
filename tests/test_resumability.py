@@ -1,5 +1,6 @@
 """A worker can crash mid-job; when arq re-runs it, no hospital may be created twice."""
 
+import asyncio
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 
@@ -113,3 +114,31 @@ async def test_resume_aborts_if_reconciliation_impossible(store, processor, upst
         await processor.run(BATCH_ID)
 
     assert upstream.created == []
+
+
+async def test_cancellation_drains_in_flight_rows_so_resume_cannot_duplicate(
+    store, settings, upstream: FakeUpstream
+) -> None:
+    """On SIGTERM arq cancels the job. Requests already sent upstream may still commit there, so they must be
+    allowed to finish and be recorded; rows not yet started must not be sent at all."""
+    await _seed(store, 6)
+    upstream.delay_seconds = 0.1
+    settings = settings.model_copy(update={"per_job_concurrency": 2})
+    async with httpx.AsyncClient(base_url=BASE_URL) as http:
+        processor = BulkJobProcessor(store, HospitalApiClient(http, max_retries=0, sleep=_no_sleep), settings)
+        task = asyncio.create_task(processor.run(BATCH_ID))
+        await asyncio.sleep(0.05)  # two rows are mid-request
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        assert len(upstream.created) == 2, "in-flight rows finish; queued rows are never sent"
+        results = await store.get_results(BATCH_ID)
+        assert sorted(results) == sorted(int(h["name"][1:]) for h in upstream.created), "nothing orphaned"
+
+        await processor.run(BATCH_ID)
+
+    assert sorted(upstream.created_names) == [f"H{i}" for i in range(1, 7)]
+    meta = await store.get_meta(BATCH_ID)
+    assert meta.status is JobStatus.COMPLETED
+    assert (meta.processed, meta.succeeded) == (6, 6)
