@@ -70,7 +70,16 @@ class BulkService:
         return BulkSubmission(batch_id=batch_id, status=JobStatus.QUEUED, total_rows=meta.total_rows)
 
     async def get_status(self, batch_id: str) -> BulkStatusResponse | None:
-        raise NotImplementedError
+        meta = await self._store.get_meta(batch_id)
+        if meta is None:
+            return None
+        results = await self._store.get_results(batch_id)
+        percent = round(meta.processed / meta.total_rows * 100, 1) if meta.total_rows else 0.0
+        return BulkStatusResponse(
+            **meta.model_dump(exclude={"file_hash"}),
+            percent_complete=percent,
+            results=list(results.values()),
+        )
 
     async def _enqueue(self, batch_id: str, job_id: str) -> None:
         try:
