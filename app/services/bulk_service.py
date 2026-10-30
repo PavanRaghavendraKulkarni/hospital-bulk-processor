@@ -20,6 +20,7 @@ logger = get_logger(__name__)
 # A re-upload of the same file maps to the existing job only if that job is alive or succeeded.
 # After a (partial) failure the user may re-upload to start fresh, or use /retry on the old batch.
 REUSABLE_STATUSES = frozenset({JobStatus.QUEUED, JobStatus.PROCESSING, JobStatus.COMPLETED})
+RETRYABLE_STATUSES = {JobStatus.PARTIAL_FAILURE, JobStatus.FAILED}
 
 
 class QueueUnavailableError(Exception):
@@ -87,11 +88,36 @@ class BulkService:
         return BulkSubmission(batch_id=batch_id, status=JobStatus.QUEUED, total_rows=meta.total_rows)
 
     def validate(self, content: bytes, filename: str | None) -> list[HospitalRow]:
-        raise NotImplementedError
+        return validate_csv(
+            content,
+            filename=filename,
+            max_rows=self._settings.max_csv_rows,
+            max_bytes=self._settings.max_upload_bytes,
+        )
 
     async def retry(self, batch_id: str) -> list[int] | None:
-        """Re-queue failed rows. Returns the row numbers reset, or None if the batch is unknown."""
-        raise NotImplementedError
+        """Re-queue failed rows. Returns the row numbers reset, or None if the batch is unknown.
+
+        Rows already created are kept; the worker skips them, and activates the batch once all succeed.
+        """
+        meta = await self._store.get_meta(batch_id)
+        if meta is None:
+            return None
+        # Compare-and-set so two concurrent retry calls can't both enqueue the same batch.
+        if not await self._store.transition_status(batch_id, RETRYABLE_STATUSES, JobStatus.QUEUED):
+            current = await self._store.get_meta(batch_id)
+            if current is not None and current.status is JobStatus.COMPLETED:
+                raise RetryNotAllowedError("Nothing to retry: every row was created and the batch is active")
+            status = current.status if current else "unknown"
+            raise RetryNotAllowedError(f"Batch is {status}; it can be retried once it has finished")
+
+        retried = await self._store.reset_failed_rows(batch_id)
+        await self._store.update_meta(batch_id, error=None, finished_at=None, processing_time_seconds=None)
+        await self._store.refresh_ttl(batch_id)
+        # arq ignores a job id it has already seen, so each retry needs a fresh one.
+        await self._enqueue(batch_id, job_id=f"{batch_id}:retry:{uuid.uuid4().hex[:8]}")
+        logger.info("bulk_job_retry_queued", batch_id=batch_id, retried_rows=retried)
+        return retried
 
     async def get_status(self, batch_id: str) -> BulkStatusResponse | None:
         meta = await self._store.get_meta(batch_id)

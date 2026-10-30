@@ -36,6 +36,7 @@ class ProgressStore:
         self._redis = redis
         self._ttl = ttl_seconds
         self._idempotency_ttl = idempotency_ttl_seconds
+        self._transition_script = redis.register_script(_TRANSITION_SCRIPT)
 
     async def create_job(self, meta: JobMeta, rows: list[HospitalRow]) -> None:
         """Persist metadata and parsed rows atomically, before the job is enqueued."""
@@ -100,7 +101,9 @@ class ProgressStore:
             await pipe.execute()
 
     async def transition_status(self, batch_id: str, allowed_from: set[JobStatus], to: JobStatus) -> bool:
-        raise NotImplementedError
+        """Atomic compare-and-set on status. Returns False if the job is missing or in another state."""
+        changed = await self._transition_script(keys=[meta_key(batch_id)], args=[to, *allowed_from])
+        return bool(changed)
 
     async def delete_job(self, batch_id: str) -> None:
         await self._redis.delete(meta_key(batch_id), rows_key(batch_id), results_key(batch_id))
@@ -114,6 +117,20 @@ class ProgressStore:
 
     async def replace_file_hash(self, file_hash: str, batch_id: str) -> None:
         await self._redis.set(file_hash_key(file_hash), batch_id, ex=self._idempotency_ttl)
+
+
+# KEYS[1] = meta hash, ARGV[1] = new status, ARGV[2..] = statuses it may move from.
+_TRANSITION_SCRIPT = """
+local current = redis.call('HGET', KEYS[1], 'status')
+if not current then return 0 end
+for i = 2, #ARGV do
+    if ARGV[i] == current then
+        redis.call('HSET', KEYS[1], 'status', ARGV[1])
+        return 1
+    end
+end
+return 0
+"""
 
 
 def _to_hash(values: dict[str, Any]) -> dict[str, str]:
