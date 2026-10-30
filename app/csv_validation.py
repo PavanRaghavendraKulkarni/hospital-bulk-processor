@@ -67,17 +67,15 @@ def validate_csv(
     seen: dict[tuple[str, str], int] = {}
     for row_number, record in enumerate(data, start=1):
         row, row_errors = _parse_row(row_number, record, columns)
-        if row is not None:
-            key = (row.name.casefold(), row.address.casefold())
-            if key in seen:
-                row_errors.append(
-                    RowError(row=row_number, message=f"Duplicate of row {seen[key]} (same name and address)")
-                )
-            else:
-                seen[key] = row_number
         errors.extend(row_errors)
-        if row is not None and not row_errors:
-            rows.append(row)
+        if row is None:
+            continue
+        # Duplicates would create the same hospital twice and break name+address matching on resume.
+        key = (row.name.casefold(), row.address.casefold())
+        if key in seen:
+            errors.append(RowError(row=row_number, message=f"Duplicate of row {seen[key]} (same name and address)"))
+        seen.setdefault(key, row_number)
+        rows.append(row)
 
     if errors:
         raise CsvValidationError("CSV contains invalid rows", status_code=422, errors=errors)
