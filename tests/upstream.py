@@ -18,6 +18,8 @@ class FakeUpstream:
         # name -> list of responses to return in order before succeeding (e.g. [503] or [422])
         self.failures: dict[str, list[int]] = {}
         self.activate_failures: list[int] = []
+        self.list_failures: list[int] = []
+        self.list_calls = 0
         self.delay_seconds = 0.0
         self.in_flight = 0
         self.peak_in_flight = 0
@@ -28,6 +30,14 @@ class FakeUpstream:
             side_effect=self._activate
         )
         router.get(url__regex=rf"{BASE_URL}/hospitals/batch/(?P<batch_id>[^/]+)$").mock(side_effect=self._list_batch)
+
+    def preexisting(self, batch_id: str, name: str, address: str) -> dict:
+        """Simulate a hospital the upstream created before a worker crashed and lost the response."""
+        hospital = {"id": 900 + len(self.created), "name": name, "address": address, "phone": None,
+                    "creation_batch_id": batch_id, "active": False}
+        self.created.append(hospital)
+        self.batches.setdefault(batch_id, []).append(hospital)
+        return hospital
 
     @property
     def created_names(self) -> list[str]:
@@ -61,4 +71,7 @@ class FakeUpstream:
         return httpx.Response(200, json={"activated": len(self.batches.get(batch_id, []))})
 
     async def _list_batch(self, request: httpx.Request, batch_id: str) -> httpx.Response:
+        self.list_calls += 1
+        if self.list_failures:
+            return httpx.Response(self.list_failures.pop(0))
         return httpx.Response(200, json=self.batches.get(batch_id, []))

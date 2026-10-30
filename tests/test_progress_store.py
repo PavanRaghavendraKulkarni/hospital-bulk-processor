@@ -147,3 +147,12 @@ async def test_replace_file_hash_points_to_new_batch(store: ProgressStore) -> No
     await store.replace_file_hash("sha", "batch-2")
 
     assert await store.claim_file_hash("sha", "batch-3") == "batch-2"
+
+
+async def test_delete_job_removes_all_job_keys(store: ProgressStore, redis) -> None:
+    await store.create_job(_meta(), _rows())
+    await store.record_result(BATCH_ID, _created(1))
+
+    await store.delete_job(BATCH_ID)
+
+    assert await redis.keys("bulk:*") == []

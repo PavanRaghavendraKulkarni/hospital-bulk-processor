@@ -250,3 +250,15 @@ async def test_each_attempt_holds_a_limiter_slot_but_backoff_does_not() -> None:
         await _create(client)
 
     assert events == ["acquire", "release", "sleep", "acquire", "release"]
+
+
+# --- list_batch -----------------------------------------------------------------
+
+
+@respx.mock
+async def test_list_batch_returns_hospitals(client) -> None:
+    respx.get(f"{BASE_URL}/hospitals/batch/{BATCH_ID}").mock(return_value=httpx.Response(200, json=[HOSPITAL_JSON]))
+
+    hospitals = await client.list_batch(BATCH_ID)
+
+    assert [h.id for h in hospitals] == [42]

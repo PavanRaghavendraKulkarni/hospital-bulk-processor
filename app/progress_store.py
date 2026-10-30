@@ -99,6 +99,9 @@ class ProgressStore:
                 pipe.expire(key, self._ttl)
             await pipe.execute()
 
+    async def delete_job(self, batch_id: str) -> None:
+        raise NotImplementedError
+
     async def claim_file_hash(self, file_hash: str, batch_id: str) -> str | None:
         """Atomically map a file hash to batch_id. Returns the existing batch_id if already claimed."""
         key = file_hash_key(file_hash)
