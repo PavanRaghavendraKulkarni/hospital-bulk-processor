@@ -1,5 +1,6 @@
 import json
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 import httpx
 import pytest
@@ -222,3 +223,30 @@ async def test_activate_batch_does_not_retry_4xx(client, sleep) -> None:
 
     assert route.call_count == 1
     assert sleep.calls == []
+
+
+# --- global rate limiter integration ------------------------------------------
+
+
+@respx.mock
+async def test_each_attempt_holds_a_limiter_slot_but_backoff_does_not() -> None:
+    events: list[str] = []
+
+    class RecordingLimiter:
+        @asynccontextmanager
+        async def slot(self):
+            events.append("acquire")
+            yield
+            events.append("release")
+
+    async def recording_sleep(seconds: float) -> None:
+        events.append("sleep")
+
+    respx.post(f"{BASE_URL}/hospitals/").mock(
+        side_effect=[httpx.Response(503), httpx.Response(200, json=HOSPITAL_JSON)]
+    )
+    async with httpx.AsyncClient(base_url=BASE_URL) as http:
+        client = HospitalApiClient(http, max_retries=1, sleep=recording_sleep, limiter=RecordingLimiter())
+        await _create(client)
+
+    assert events == ["acquire", "release", "sleep", "acquire", "release"]
