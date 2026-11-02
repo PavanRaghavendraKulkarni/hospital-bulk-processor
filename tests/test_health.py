@@ -38,3 +38,11 @@ async def test_health_degraded_when_redis_down() -> None:
     status_code, body = await _get_health(DownRedis())
     assert status_code == 503
     assert body == {"status": "degraded", "redis": "unavailable"}
+
+
+def test_openapi_documents_503_when_redis_is_down() -> None:
+    responses = create_app().openapi()["paths"]["/health"]["get"]["responses"]
+
+    assert "503" in responses
+    schema = responses["503"]["content"]["application/json"]["schema"]
+    assert schema == {"$ref": "#/components/schemas/HealthResponse"}
