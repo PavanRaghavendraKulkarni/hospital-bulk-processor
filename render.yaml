@@ -1,0 +1,98 @@
+# Render Blueprint for the free-tier demo deployment.
+# Field names checked against Render's Blueprint JSON schema (https://render.com/schema/render.yaml.json).
+#
+# The free plan has no Background Worker, so the API and the arq worker share one web service container
+# (scripts/start.sh). In production they would be separate services: `type: web` and `type: worker`.
+
+services:
+  - type: keyvalue
+    name: hospital-bulk-redis
+    plan: free
+    region: oregon
+    # Empty list = no access from the public internet; only services in this Render account can connect.
+    ipAllowList: []
+    # Never evict keys: they hold the job queue and job progress. When full, writes fail loudly instead.
+    maxmemoryPolicy: noeviction
+
+  - type: web
+    name: hospital-bulk-processor
+    runtime: docker
+    plan: free
+    region: oregon # same region as the Key Value instance, so the internal connection works
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    dockerCommand: ./scripts/start.sh
+    healthCheckPath: /health
+    # Longer than WORKER_DRAIN_SECONDS so in-flight upstream requests can finish on deploy/restart.
+    maxShutdownDelaySeconds: 90
+    autoDeployTrigger: commit
+    envVars:
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: hospital-bulk-redis
+          property: connectionString
+
+      # General
+      - key: LOG_LEVEL
+        value: INFO
+      - key: LOG_JSON
+        value: "true"
+
+      # Redis TTLs
+      - key: JOB_TTL_SECONDS
+        value: "86400"
+      - key: IDEMPOTENCY_TTL_SECONDS
+        value: "86400"
+
+      # Upstream Hospital Directory API
+      - key: HOSPITAL_API_BASE_URL
+        value: https://hospital-directory.onrender.com
+      - key: HOSPITAL_API_TIMEOUT_SECONDS
+        value: "60"
+      - key: HOSPITAL_API_MAX_RETRIES
+        value: "3"
+      - key: HOSPITAL_API_BACKOFF_BASE_SECONDS
+        value: "0.5"
+      - key: HOSPITAL_API_BACKOFF_MAX_SECONDS
+        value: "8"
+
+      # CSV limits
+      - key: MAX_CSV_ROWS
+        value: "20"
+      - key: MAX_UPLOAD_BYTES
+        value: "1048576"
+
+      # Concurrency (0.1 CPU free instance: keep the global cap modest)
+      - key: PER_JOB_CONCURRENCY
+        value: "5"
+      - key: UPSTREAM_MAX_IN_FLIGHT
+        value: "10"
+      - key: UPSTREAM_SLOT_TTL_SECONDS
+        value: "120"
+
+      # Worker
+      - key: WORKER_MAX_JOBS
+        value: "10"
+      - key: WORKER_JOB_TIMEOUT_SECONDS
+        value: "1800"
+      - key: WORKER_MAX_TRIES
+        value: "3"
+      - key: WORKER_DRAIN_SECONDS
+        value: "75"
+
+      # Synchronous upload
+      - key: SYNC_WAIT_TIMEOUT_SECONDS
+        value: "120"
+      - key: SYNC_POLL_INTERVAL_SECONDS
+        value: "0.5"
+
+      # Server-Sent Events
+      - key: SSE_POLL_INTERVAL_SECONDS
+        value: "1.0"
+      - key: SSE_HEARTBEAT_SECONDS
+        value: "15"
+
+      # Policy
+      - key: ACTIVATE_ON_PARTIAL_FAILURE
+        value: "false"

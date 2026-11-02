@@ -1,5 +1,9 @@
 # Hospital Bulk Processor
 
+**Live demo:** `https://<your-service>.onrender.com` (Swagger UI at [`/docs`](https://<your-service>.onrender.com/docs)).
+This runs on Render's free tier, so the first request after about 15 minutes idle can take 30–60s while it wakes up.
+See [Deployment](#deployment-render-free-tier).
+
 A FastAPI service that accepts a CSV of hospitals and bulk-creates them through the
 [Hospital Directory API](https://hospital-directory.onrender.com/docs). Uploads are validated
 synchronously, then processed in the background by an [arq](https://arq-docs.helpmanual.io/) worker.
@@ -46,6 +50,44 @@ python3 -m venv .venv
 Tests use **fakeredis** (with Lua, for the rate limiter) and **respx** to fake the upstream API.
 `tests/upstream.py` is a scripted fake of the upstream API that can inject 5xx/4xx responses, add latency,
 and record peak concurrency.
+
+---
+
+## Deployment (Render free tier)
+
+The repo includes a [Render Blueprint](https://render.com/docs/infrastructure-as-code) in [`render.yaml`](render.yaml).
+It creates two resources:
+
+| Resource | Plan | Notes |
+|---|---|---|
+| `hospital-bulk-redis` (Key Value) | free | Internal-only (`ipAllowList: []`). `maxmemoryPolicy: noeviction`, so queue and job keys are never silently evicted |
+| `hospital-bulk-processor` (web service, Docker) | free | Built from the `Dockerfile`, started with [`scripts/start.sh`](scripts/start.sh), health check `/health`. `REDIS_URL` comes from the Key Value instance's connection string |
+
+To deploy:
+1. Fork or push this repo to GitHub.
+2. In the Render dashboard choose **New → Blueprint**, connect the repo and pick the `main` branch.
+3. Review the two resources and click **Deploy Blueprint**.
+4. When the web service shows **Live**, open `https://<your-service>.onrender.com/docs`.
+
+Every other setting from [`.env.example`](.env.example) is already in `render.yaml` with the same defaults. You can
+change them later under the web service's **Environment** tab.
+
+### Single container: free-tier demo only
+Render's free plan has no Background Worker service, so `scripts/start.sh` runs the **arq worker and uvicorn in one
+container**:
+- Uvicorn binds to `$PORT`.
+- If either process dies, the script stops the other and exits non-zero, so Render restarts the container.
+- On SIGTERM (deploys, restarts) the script forwards the signal to both processes and waits. The worker's drain logic therefore still finishes in-flight upstream requests. `maxShutdownDelaySeconds: 90` gives it longer than `WORKER_DRAIN_SECONDS` (75).
+
+**In production the API and worker run as separate services.** That means a `type: web` service and a
+`type: worker` service on paid plans, exactly as `docker-compose.yml` does locally, so they scale and restart
+independently.
+
+### Free-tier caveats
+- **Cold starts:** free web services sleep after about 15 minutes without traffic. The next request wakes them and can take **30–60s**. The worker sleeps too, so `wait=false` jobs queued just before a sleep finish when the service wakes. The default `wait=true` request keeps the service awake until its job is done.
+- **No Redis persistence:** free Key Value instances don't persist data, unlike the AOF-enabled Redis in `docker-compose.yml`. A Key Value restart loses queued jobs and progress. For the demo that's acceptable; for production use a paid instance with persistence.
+- **Small instance:** 0.1 CPU and 512 MB, shared by both processes. That's fine for 20-row uploads.
+- The upstream Hospital Directory API is also on Render's free tier, so it can cold-start in the middle of a job. The client's 60s timeout and retries cover that.
 
 ---
 
@@ -347,8 +389,9 @@ Infrastructure errors (such as Redis blips) raise `arq.Retry` with a growing del
 marked `failed`.
 
 ### Durability: Redis is in-memory
-AOF is enabled (`appendfsync everysec`), so queued jobs and progress survive a Redis restart, losing at most about
-1s of writes. All job keys expire after 24h. That keeps Redis small, but it means Redis is **not** an audit trail.
+AOF is enabled (`appendfsync everysec`) in `docker-compose.yml`, so queued jobs and progress survive a Redis
+restart, losing at most about 1s of writes. The free Render Key Value used by the demo has no persistence (see
+[Deployment](#deployment-render-free-tier)). All job keys expire after 24h. That keeps Redis small, but it means Redis is **not** an audit trail.
 For a permanent record I would persist each finished job's metadata and per-row results to **Postgres** (in the
 worker's `_finish`, or via an outbox), and keep Redis for hot progress only.
 
