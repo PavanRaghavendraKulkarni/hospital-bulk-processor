@@ -356,14 +356,3 @@ plus `refactor:` and one `fix:` commit for the bug found in the real crash test.
 | Retry / validate | `test_retry_validate_api.py` | 404/409 cases, only failed rows reset, unique arq job id, concurrent retries, full retry flow ending in activation |
 
 ---
-
-## What I'd improve with more time
-
-- **Ambiguous POST timeouts.** If a `ReadTimeout` happens after upstream committed the row, the client's in-loop retry can create a duplicate. The fix is to not retry ambiguous failures inline: mark the row failed, and let `/retry`'s reconcile step (which already exists) decide. Better still, add an `Idempotency-Key` header upstream.
-- **Persist finished jobs to Postgres** for audit and history, with Redis as the hot cache only.
-- **Stream large files to S3**, read them in chunks, and track progress by counters only.
-- **Observability**: Prometheus metrics (rows/s, upstream latency, retry counts, limiter wait time), OpenTelemetry traces across API → queue → worker, and alerts on `failed` jobs.
-- **Adaptive rate limiting**: shrink the global cap when the upstream returns 429/5xx and grow it back slowly (AIMD), instead of a fixed number.
-- **Auth and per-tenant quotas** on the upload endpoint, plus a cleanup endpoint that calls `DELETE /hospitals/batch/{id}` to discard a partially created batch.
-- **Dead-letter view** listing failed jobs, and a webhook or callback URL so clients don't need to poll.
-- A **docker-compose integration test** in CI that runs against a stub upstream container.
