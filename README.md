@@ -3,7 +3,9 @@
 A FastAPI service that accepts a CSV of hospitals and bulk-creates them through the
 [Hospital Directory API](https://hospital-directory.onrender.com/docs). Uploads are validated
 synchronously, then processed in the background by an [arq](https://arq-docs.helpmanual.io/) worker.
-Live progress is tracked in Redis and exposed via a status endpoint and a Server-Sent Events stream.
+By default the upload request waits for that job and returns the full processing result. With `?wait=false` it
+returns `202` immediately. Live progress is tracked in Redis and exposed via a status endpoint and a Server-Sent
+Events stream.
 
 - **Robust upstream calls**: timeouts, exponential backoff with jitter on network errors / 429 / 5xx, never on 4xx.
 - **Two-level concurrency control**: up to 5 parallel calls per job, plus a **global** cap shared by every job and worker (held in Redis).
@@ -28,7 +30,8 @@ docker compose up --build
 
 ```bash
 curl localhost:8000/health                       # {"status":"ok","redis":"ok"}
-curl -F "file=@sample.csv" localhost:8000/hospitals/bulk
+curl -F "file=@sample.csv" localhost:8000/hospitals/bulk              # waits, returns the full result
+curl -F "file=@sample.csv" "localhost:8000/hospitals/bulk?wait=false" # 202 + status_url right away
 ```
 
 ### Local development and tests
@@ -36,7 +39,7 @@ curl -F "file=@sample.csv" localhost:8000/hospitals/bulk
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -r requirements-dev.txt
-.venv/bin/pytest -q            # 129 tests, ~1.5s, never touches the real API
+.venv/bin/pytest -q            # 136 tests, ~2.5s, never touches the real API
 .venv/bin/ruff check app tests
 ```
 
@@ -91,11 +94,19 @@ sequenceDiagram
     A->>R: create meta + rows (MULTI), TTL 24h
     A->>R: SET bulk:hash:{sha256} NX
     alt same file already queued/processing/completed
-        A->>R: delete own just-created keys
-        A-->>C: 202 existing batch_id, duplicate=true
+        A->>R: delete own just-created keys, use existing batch_id
+    else new file
+        A->>R: enqueue job (job_id = batch_id)
     end
-    A->>R: enqueue job (job_id = batch_id)
-    A-->>C: 202 batch_id + status_url
+    alt wait=false
+        A-->>C: 202 batch_id + status_url
+    else wait=true (default)
+        loop until final status or SYNC_WAIT_TIMEOUT_SECONDS
+            A->>R: read meta + results
+        end
+        A-->>C: 200 full result (or 202 + status_url on timeout)
+    end
+    Note over A,W: the worker processes the job independently of the waiting request
 
     W->>R: status=processing, load rows + results
     opt job ran before (crash / retry)
@@ -141,7 +152,7 @@ which is what makes the fast, network-free tests possible.
 
 | Method | Path | Purpose |
 |---|---|---|
-| `POST` | `/hospitals/bulk` | Upload CSV → `202` with `batch_id` and `status_url` |
+| `POST` | `/hospitals/bulk` | Upload CSV. Default (`wait=true`): `200` with the full result. `wait=false`: `202` with `batch_id` and `status_url` |
 | `GET` | `/hospitals/bulk/{batch_id}/status` | Progress, counters, per-row results, timestamps |
 | `GET` | `/hospitals/bulk/{batch_id}/events` | Server-Sent Events: `progress` on every change, then `complete` |
 | `POST` | `/hospitals/bulk/{batch_id}/retry` | Re-queue only failed rows, activate when all succeed |
@@ -154,16 +165,40 @@ fine), at most `MAX_CSV_ROWS` (20) data rows and `MAX_UPLOAD_BYTES` (1 MiB). Row
 
 ### Upload
 
+`POST /hospitals/bulk` takes one query parameter:
+
+| `wait` | Behaviour |
+|---|---|
+| `true` (default) | Enqueue the job, wait for it to finish, return **`200`** with the full result. The body is the same as `GET .../status`. If the job isn't finished after `SYNC_WAIT_TIMEOUT_SECONDS` (120s), return **`202`** with `batch_id` and `status_url` instead. The job keeps running and nothing is lost. |
+| `false` | Enqueue and return **`202`** right away with `batch_id` and `status_url`. |
+
+**Synchronous (default).** `200` covers `completed`, `partial_failure` and `failed` jobs, so check `status` and
+`batch_activated`.
+
 ```bash
 curl -F "file=@sample.csv" localhost:8000/hospitals/bulk
+```
+```json
+{"batch_id":"a2cd6643-77d7-469e-9e00-dba2d124a0f1","filename":"sample.csv","status":"completed",
+ "total_rows":5,"processed":5,"succeeded":5,"failed":0,"percent_complete":100.0,"batch_activated":true,
+ "created_at":"2026-10-30T15:06:52.683Z","started_at":"2026-10-30T15:06:52.781Z",
+ "finished_at":"2026-10-30T15:06:59.606Z","processing_time_seconds":6.82,"error":null,
+ "results":[{"row":1,"name":"Riverside General Hospital","status":"created","hospital_id":378,"error":null}, ...]}
+```
+
+**Asynchronous.**
+
+```bash
+curl -F "file=@sample.csv" "localhost:8000/hospitals/bulk?wait=false"
 ```
 ```json
 {"batch_id":"a2cd6643-77d7-469e-9e00-dba2d124a0f1","status":"queued","total_rows":5,
  "duplicate":false,"status_url":"/hospitals/bulk/a2cd6643-77d7-469e-9e00-dba2d124a0f1/status"}
 ```
 
-Uploading the same file again while that job is queued, processing or completed returns the same `batch_id`
-with `"duplicate": true`.
+Uploading the same file again while that job is queued, processing or completed maps to the same `batch_id`.
+With `wait=false` the response has `"duplicate": true`. In sync mode the request waits for the *existing* job and
+returns its result, without creating any new hospitals.
 
 ### Validation errors
 
@@ -259,6 +294,16 @@ Why this layout:
 - **Crash recovery.** With `BackgroundTasks`, work dies with the process. With arq the job lives in Redis: if a worker dies or is redeployed, the job is re-run, and the resume logic (below) keeps that safe.
 - **Scales past 20 rows.** Workers scale horizontally and the API only validates and enqueues. Validation still happens synchronously, so a bad file gets an immediate 400/422 and never reaches the queue.
 
+### Sync by default, async underneath
+The assignment expects the upload call to return the processing result, so `wait=true` is the default. That
+doesn't change the architecture:
+- The request still only validates, stores and enqueues. Then it polls the progress store until the job is final.
+- The worker does all the processing, with its rate limiting, retries and resume logic unchanged.
+- The wait is capped by `SYNC_WAIT_TIMEOUT_SECONDS`, below typical proxy and load balancer timeouts. A slow upstream therefore produces a `202` with a `status_url` rather than a dropped connection.
+- If the client disconnects mid-wait, the job finishes anyway, because it is in the queue rather than in the request.
+
+Clients that want the async model pass `wait=false`.
+
 ### Why arq rather than Celery
 The work is concurrent async HTTP. arq is asyncio-native and uses Redis, which this service already needs for
 progress, so there is no second broker. Celery would mean wrapping async code in `asyncio.run` per task (or using
@@ -335,6 +380,8 @@ Every value comes from the environment; see [`.env.example`](.env.example). The 
 | `ACTIVATE_ON_PARTIAL_FAILURE` | `false` | Activate a batch even if some rows failed |
 | `JOB_TTL_SECONDS` / `IDEMPOTENCY_TTL_SECONDS` | `86400` | Expiry of job state / duplicate detection |
 | `WORKER_MAX_TRIES` / `WORKER_DRAIN_SECONDS` | `3` / `75` | Job retries / shutdown drain window |
+| `SYNC_WAIT_TIMEOUT_SECONDS` | `120` | How long `POST /hospitals/bulk` (`wait=true`) waits before falling back to `202` |
+| `SYNC_POLL_INTERVAL_SECONDS` | `0.5` | How often the waiting request re-reads progress from Redis |
 
 ---
 
@@ -350,6 +397,7 @@ plus `refactor:` and one `fix:` commit for the bug found in the real crash test.
 | Progress store | `test_progress_store.py` | round trips, TTLs on every key, exact counters under 50 concurrent writes, reset, hash claim |
 | Rate limiter | `test_rate_limiter.py` | cap, release, lease expiry, waiting, **global cap across 3 limiter instances** |
 | Upload | `test_bulk_upload_api.py` | 202 response, stored before enqueue, 400/422 store nothing, 503 when the queue is down |
+| Sync upload | `test_bulk_upload_sync.py` | default waits and returns 200 with the full result (same body as `/status`), partial failure, timeout → 202 while the job keeps running, `wait=false` → 202, duplicates wait for the existing job |
 | Worker | `test_bulk_processor.py`, `test_worker.py` | activation, 5xx then success, 4xx not retried, partial failure not activated, policy flag, per-job and **cross-job global** concurrency, arq retry policy |
 | Status / SSE | `test_bulk_status_api.py`, `test_bulk_events_api.py` | 404, percent, sorted results, end-to-end, event stream until `complete` |
 | Idempotency / resume | `test_idempotency.py`, `test_resumability.py` | duplicate uploads (including concurrent ones), skip created rows, reconcile orphans, abort if reconciliation is impossible, drain on cancel |
