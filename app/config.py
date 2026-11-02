@@ -50,6 +50,12 @@ class Settings(BaseSettings):
         default=75.0, gt=0, description="On shutdown, how long in-flight upstream requests may finish"
     )
 
+    # --- Synchronous upload (POST /hospitals/bulk?wait=true) ---
+    sync_wait_timeout_seconds: float = Field(
+        default=120.0, gt=0, description="Max time the upload request waits for the job before falling back to 202"
+    )
+    sync_poll_interval_seconds: float = Field(default=0.5, gt=0)
+
     # --- Server-Sent Events ---
     sse_poll_interval_seconds: float = Field(default=1.0, gt=0)
     sse_heartbeat_seconds: float = Field(default=15.0, gt=0, description="Comment line to keep proxies from timing out")

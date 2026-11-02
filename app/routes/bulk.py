@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile, status
 from fastapi.responses import StreamingResponse
 
 from app.config import Settings, get_settings
@@ -43,14 +43,24 @@ def status_url(batch_id: str) -> str:
 
 @router.post(
     "",
-    status_code=status.HTTP_202_ACCEPTED,
-    response_model=BulkUploadResponse,
-    responses={**VALIDATION_RESPONSES, 503: {"model": ErrorResponse}},
+    response_model=BulkStatusResponse | BulkUploadResponse,
+    responses={
+        200: {"model": BulkStatusResponse, "description": "wait=true and the job finished: full processing result"},
+        202: {"model": BulkUploadResponse, "description": "wait=false, or the sync wait timed out: poll status_url"},
+        **VALIDATION_RESPONSES,
+        503: {"model": ErrorResponse},
+    },
 )
 async def upload_bulk(
-    upload: Upload = Depends(read_upload), service: BulkService = Depends(get_bulk_service)
-) -> BulkUploadResponse:
+    response: Response,
+    wait: bool = Query(True, description="Wait for the job to finish and return its result (falls back to 202)"),
+    upload: Upload = Depends(read_upload),
+    service: BulkService = Depends(get_bulk_service),
+) -> BulkStatusResponse | BulkUploadResponse:
     submission = await service.submit(upload.content, upload.filename)
+    if wait and (result := await service.wait_for_result(submission.batch_id)) is not None:
+        return result
+    response.status_code = status.HTTP_202_ACCEPTED
     return BulkUploadResponse(**submission.model_dump(), status_url=status_url(submission.batch_id))
 
 

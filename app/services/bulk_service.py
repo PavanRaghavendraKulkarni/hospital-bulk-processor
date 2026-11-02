@@ -127,6 +127,23 @@ class BulkService:
             results=list(results.values()),
         )
 
+    async def wait_for_result(self, batch_id: str) -> BulkStatusResponse | None:
+        """Poll until the job reaches a final status. Returns None if it doesn't within the sync wait timeout.
+
+        Timing out never affects the job: it is already enqueued and keeps running in the worker.
+        """
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self._settings.sync_wait_timeout_seconds
+        while True:
+            job_status = await self.get_status(batch_id)
+            if job_status is None or job_status.status.is_final:
+                return job_status
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                logger.info("sync_wait_timed_out", batch_id=batch_id, status=job_status.status)
+                return None
+            await asyncio.sleep(min(self._settings.sync_poll_interval_seconds, remaining))
+
     async def stream_status(self, batch_id: str) -> AsyncIterator[str]:
         """Yield Server-Sent Events: `progress` whenever the status changes, then one `complete` and stop."""
         loop = asyncio.get_running_loop()
