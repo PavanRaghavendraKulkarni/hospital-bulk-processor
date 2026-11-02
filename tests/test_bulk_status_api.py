@@ -71,7 +71,9 @@ def upstream() -> AsyncIterator[FakeUpstream]:
 
 async def test_upload_process_status_end_to_end(api, store: ProgressStore, settings, upstream: FakeUpstream) -> None:
     csv = b"name,address,phone\nCity Hospital,1 Main St,555-0100\nGeneral,2 Oak Ave,\n"
-    batch_id = (await api.post("/hospitals/bulk", files={"file": ("h.csv", csv, "text/csv")})).json()["batch_id"]
+    batch_id = (
+        await api.post("/hospitals/bulk", params={"wait": "false"}, files={"file": ("h.csv", csv, "text/csv")})
+    ).json()["batch_id"]
 
     async with httpx.AsyncClient(base_url=BASE_URL) as http:
         await BulkJobProcessor(store, HospitalApiClient(http), settings).run(batch_id)

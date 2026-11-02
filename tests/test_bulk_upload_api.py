@@ -11,7 +11,9 @@ VALID_CSV = b"name,address,phone\nCity Hospital,1 Main St,555-0100\nGeneral,2 Oa
 
 
 async def _upload(api, content: bytes, filename: str = "hospitals.csv", content_type: str = "text/csv"):
-    return await api.post("/hospitals/bulk", files={"file": (filename, content, content_type)})
+    return await api.post(
+        "/hospitals/bulk", params={"wait": "false"}, files={"file": (filename, content, content_type)}
+    )
 
 
 async def test_valid_upload_returns_202_and_queues_job(api, store: ProgressStore, queue: FakeQueue) -> None:

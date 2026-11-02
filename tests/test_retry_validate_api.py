@@ -32,7 +32,7 @@ async def processor(store, settings) -> AsyncIterator[BulkJobProcessor]:
 
 
 async def _upload(api, content: bytes = CSV) -> str:
-    resp = await api.post("/hospitals/bulk", files={"file": ("h.csv", content, "text/csv")})
+    resp = await api.post("/hospitals/bulk", params={"wait": "false"}, files={"file": ("h.csv", content, "text/csv")})
     assert resp.status_code == 202, resp.text
     return resp.json()["batch_id"]
 

@@ -10,7 +10,7 @@ CSV = b"name,address,phone\nCity Hospital,1 Main St,555-0100\nGeneral,2 Oak Ave,
 
 
 async def _upload(api, content: bytes = CSV):
-    resp = await api.post("/hospitals/bulk", files={"file": ("h.csv", content, "text/csv")})
+    resp = await api.post("/hospitals/bulk", params={"wait": "false"}, files={"file": ("h.csv", content, "text/csv")})
     assert resp.status_code == 202, resp.text
     return resp.json()
 

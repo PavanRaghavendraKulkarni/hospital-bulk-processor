@@ -18,7 +18,9 @@ def _parse_sse(text: str) -> list[tuple[str, dict]]:
 
 
 async def _upload(api) -> str:
-    return (await api.post("/hospitals/bulk", files={"file": ("h.csv", CSV, "text/csv")})).json()["batch_id"]
+    return (
+        await api.post("/hospitals/bulk", params={"wait": "false"}, files={"file": ("h.csv", CSV, "text/csv")})
+    ).json()["batch_id"]
 
 
 async def test_events_for_unknown_batch_returns_404(api) -> None:

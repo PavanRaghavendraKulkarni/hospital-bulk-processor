@@ -49,7 +49,13 @@ class FakeQueue:
 @pytest.fixture
 def settings() -> Settings:
     return Settings(
-        _env_file=None, max_csv_rows=20, max_upload_bytes=10_000, per_job_concurrency=5, sse_poll_interval_seconds=0.01
+        _env_file=None,
+        max_csv_rows=20,
+        max_upload_bytes=10_000,
+        per_job_concurrency=5,
+        sse_poll_interval_seconds=0.01,
+        sync_wait_timeout_seconds=2.0,
+        sync_poll_interval_seconds=0.01,
     )
 
 
