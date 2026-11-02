@@ -1,6 +1,6 @@
 # Hospital Bulk Processor
 
-**Live demo:** `https://<your-service>.onrender.com` (Swagger UI at [`/docs`](https://<your-service>.onrender.com/docs)).
+**Live demo:** https://hospital-bulk-processor-f3am.onrender.com (Swagger UI at [`/docs`](https://hospital-bulk-processor-f3am.onrender.com/docs)).
 This runs on Render's free tier, so the first request after about 15 minutes idle can take 30–60s while it wakes up.
 See [Deployment](#deployment-render-free-tier).
 
