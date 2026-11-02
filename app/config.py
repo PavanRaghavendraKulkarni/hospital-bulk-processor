@@ -10,7 +10,6 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     # --- General ---
-    app_name: str = "hospital-bulk-processor"
     log_level: str = "INFO"
     log_json: bool = True
 
