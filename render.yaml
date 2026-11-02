@@ -23,8 +23,6 @@ services:
     dockerContext: .
     dockerCommand: ./scripts/start.sh
     healthCheckPath: /health
-    # Longer than WORKER_DRAIN_SECONDS so in-flight upstream requests can finish on deploy/restart.
-    maxShutdownDelaySeconds: 90
     autoDeployTrigger: commit
     envVars:
       - key: REDIS_URL
@@ -78,8 +76,10 @@ services:
         value: "1800"
       - key: WORKER_MAX_TRIES
         value: "3"
+      # Free services can't set maxShutdownDelaySeconds, so Render force-kills 30s after SIGTERM.
+      # Keep the drain window below that so the worker finishes and exits cleanly.
       - key: WORKER_DRAIN_SECONDS
-        value: "75"
+        value: "25"
 
       # Synchronous upload
       - key: SYNC_WAIT_TIMEOUT_SECONDS

@@ -77,7 +77,8 @@ Render's free plan has no Background Worker service, so `scripts/start.sh` runs 
 container**:
 - Uvicorn binds to `$PORT`.
 - If either process dies, the script stops the other and exits non-zero, so Render restarts the container.
-- On SIGTERM (deploys, restarts) the script forwards the signal to both processes and waits. The worker's drain logic therefore still finishes in-flight upstream requests. `maxShutdownDelaySeconds: 90` gives it longer than `WORKER_DRAIN_SECONDS` (75).
+- On SIGTERM (deploys, restarts) the script forwards the signal to both processes and waits. The worker's drain logic therefore still finishes in-flight upstream requests.
+- Free services can't change Render's shutdown grace period (`maxShutdownDelaySeconds`), so the container is force-killed 30s after SIGTERM. The Blueprint therefore sets `WORKER_DRAIN_SECONDS=25`, down from 75 locally. If an upstream request is still running when the 25s are up, it is cancelled. The resumed job's reconcile step (`GET /hospitals/batch/{id}`) then catches any row that was committed anyway. On a paid plan, set `maxShutdownDelaySeconds: 90` and keep the drain at 75s.
 
 **In production the API and worker run as separate services.** That means a `type: web` service and a
 `type: worker` service on paid plans, exactly as `docker-compose.yml` does locally, so they scale and restart

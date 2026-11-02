@@ -7,7 +7,8 @@
 # - Uvicorn binds to $PORT (set by Render; defaults to 8000 locally).
 # - If either process exits, the other is stopped and the container exits non-zero, so Render restarts it.
 # - SIGTERM/SIGINT are forwarded to both and we wait for them, so the worker's drain logic finishes
-#   in-flight upstream requests before the container stops (keep maxShutdownDelaySeconds > WORKER_DRAIN_SECONDS).
+#   in-flight upstream requests before the container stops. Keep WORKER_DRAIN_SECONDS below the platform's
+#   shutdown grace period (Render free tier: 30s, not configurable).
 set -uo pipefail
 
 PORT="${PORT:-8000}"
