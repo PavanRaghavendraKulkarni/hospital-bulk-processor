@@ -8,7 +8,11 @@ from app.schemas import HealthResponse
 router = APIRouter(tags=["health"])
 
 
-@router.get("/health", response_model=HealthResponse)
+@router.get(
+    "/health",
+    response_model=HealthResponse,
+    responses={503: {"model": HealthResponse, "description": "Redis is unreachable"}},
+)
 async def health(response: Response, redis: Redis = Depends(get_redis)) -> HealthResponse:
     try:
         await redis.ping()
