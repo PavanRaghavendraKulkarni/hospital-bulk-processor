@@ -32,18 +32,30 @@ docker compose up --build
 | `worker` | arq worker (`arq app.worker.WorkerSettings`) |
 | `redis`  | Redis 7 with AOF persistence (`appendonly yes`, `appendfsync everysec`) on a named volume |
 
+> ⚠️ Uploading `sample.csv` creates **real hospitals** on the shared upstream Hospital Directory API.
+
 ```bash
-curl localhost:8000/health                       # {"status":"ok","redis":"ok"}
-curl -F "file=@sample.csv" localhost:8000/hospitals/bulk              # waits, returns the full result
-curl -F "file=@sample.csv" "localhost:8000/hospitals/bulk?wait=false" # 202 + status_url right away
+curl localhost:8000/health                                # {"status":"ok","redis":"ok"}
+curl -F "file=@sample.csv" localhost:8000/hospitals/bulk  # waits, returns the full result
+```
+
+Re-uploading the same `sample.csv` maps to the **existing** batch (idempotency). With `wait=false` you get a
+`202` with `"duplicate": true`; without it you get the existing job's result. To see a fresh `202` with a queued
+job, upload a different file:
+
+```bash
+printf 'name,address,phone\nDemo Clinic %s,1 Test St,\n' "$(date +%s)" > fresh.csv
+curl -F "file=@fresh.csv" "localhost:8000/hospitals/bulk?wait=false"     # 202 + status_url right away
 ```
 
 ### Local development and tests
 
+Requires Python 3.11+ (Docker uses 3.12).
+
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -r requirements-dev.txt
-.venv/bin/pytest -q            # 136 tests, ~2.5s, never touches the real API
+.venv/bin/pytest -q            # 137 tests, ~2.5s, never touches the real API
 .venv/bin/ruff check app tests
 ```
 
@@ -409,6 +421,15 @@ one is subscribed.
 
 ---
 
+## Known limitations
+
+- **A timed-out POST can create a duplicate.** Suppose a `POST /hospitals/` times out *after* the upstream has already saved the hospital. The client can't tell, so its automatic retry creates a second copy.
+  - **Mitigation:** don't auto-retry when the outcome is unknown, such as a read timeout after the request was sent. Record the row as failed instead and let `/retry` handle it: its reconcile step (`GET /hospitals/batch/{id}`, matched on name + address) finds the hospital if it was saved, and creates it only if it wasn't.
+  - **Ideal fix:** the upstream API accepts an `Idempotency-Key` header, so a retried POST can never create a second record.
+- **The free Render Key Value has no persistence.** The live demo's queued jobs and progress are lost if that instance restarts, unlike local `docker-compose`, which runs Redis with AOF. Production needs a paid instance with persistence.
+
+---
+
 ## Configuration
 
 Every value comes from the environment; see [`.env.example`](.env.example). The most important ones:
@@ -432,10 +453,13 @@ Every value comes from the environment; see [`.env.example`](.env.example). The 
 ## Testing
 
 The code was built test-first. `git log` shows each `test:` (red) commit followed by its `feat:` (green) commit,
-plus `refactor:` and one `fix:` commit for the bug found in the real crash test.
+plus `refactor:` commits and two `fix:` commits:
+- the drain-on-shutdown fix for duplicates found in a real crash test (`b5f9e57`);
+- the Render Blueprint fix for an option the free tier doesn't support (`ba5e919`).
 
 | Area | File | Covers |
 |---|---|---|
+| Health | `test_health.py` | 200 when Redis is up, 503 when it's down, 503 documented in OpenAPI |
 | Upstream client | `test_hospital_api_client.py` | payload, 5xx/429/network retries, `Retry-After`, backoff caps, no retry on 4xx, limiter wraps only the HTTP call |
 | CSV validation | `test_csv_validation.py` | BOM, CRLF, quoting, header rules, every file-level and row-level error, duplicates, limits |
 | Progress store | `test_progress_store.py` | round trips, TTLs on every key, exact counters under 50 concurrent writes, reset, hash claim |
